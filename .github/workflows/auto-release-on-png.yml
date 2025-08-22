@@ -2,9 +2,9 @@ name: Auto Release on PNG push
 
 on:
   push:
-    branches: [ main ]                 # ggf. anpassen
+    branches: [ main ]                 # ggf. deinen Default-Branch anpassen
     paths:
-      - 'JDReload/media/png/**'
+      - 'JDReload/media/png/**'        # nur triggern, wenn PNGs geändert wurden
   workflow_dispatch: {}                # manuell startbar
 
 jobs:
@@ -12,6 +12,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write                  # für Tag/Release + Push
+    env:
+      # Secrets/Variablen auf Job-Ebene verfügbar machen
+      WAGO_API_KEY: ${{ secrets.WAGO_API_KEY }}
+      WAGO_PROJECT_ID: ${{ vars.WAGO_PROJECT_ID }}
+      WAGO_RETAIL_PATCH: ${{ vars.WAGO_RETAIL_PATCH }}
 
     steps:
       - name: Checkout (with tags)
@@ -77,7 +82,7 @@ jobs:
       - name: Show tree and counts
         run: |
           echo "== TREE ==" && ls -R
-          echo "== COUNTS ==" 
+          echo "== COUNTS =="
           echo "PNGs:" $(find JDReload/media/png -type f -iname '*.png' | wc -l || true)
           echo "TGAs:" $(find JDReload/media -maxdepth 1 -type f -iname '*.tga' | wc -l || true)
 
@@ -90,7 +95,7 @@ jobs:
           git diff --cached --quiet || git commit -m "chore(media): auto-convert PNG->TGA and regen list [ci skip]"
           git push || true
 
-      # 5) Tag bestimmen/erstellen
+      # 5) Tag aus TOC-Version bestimmen/erstellen
       - name: Create tag from TOC version
         id: tag
         run: |
@@ -103,14 +108,13 @@ jobs:
           TAG="v$VER"
           echo "Using TAG=$TAG"
           echo "TAG=$TAG" >> $GITHUB_ENV
-          
+
           if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
             echo "Tag $TAG already exists; skipping tag creation"
           else
             git tag -a "$TAG" -m "Auto release $TAG"
             git push origin "$TAG"
           fi
-
 
       # 6) ZIP bauen (PNG-Quellen ausschließen)
       - name: Create ZIP
@@ -133,21 +137,15 @@ jobs:
 
       # 8) Wago Upload (nur wenn Secrets/Vars gesetzt)
       - name: Upload to Wago
-        if: ${{ secrets.WAGO_API_KEY != '' && vars.WAGO_PROJECT_ID != '' }}
-        env:
-          WAGO_API_KEY: ${{ secrets.WAGO_API_KEY }}
-          WAGO_PROJECT_ID: ${{ vars.WAGO_PROJECT_ID }}
-          WAGO_RETAIL_PATCH: ${{ vars.WAGO_RETAIL_PATCH }}
+        if: ${{ env.WAGO_API_KEY != '' && env.WAGO_PROJECT_ID != '' }}
         run: |
           # Stabilität aus dem Tag ableiten (alpha/beta/stable)
           if [[ "${TAG,,}" == *"alpha"* ]]; then STABILITY="alpha";
           elif [[ "${TAG,,}" == *"beta"* ]]; then STABILITY="beta";
           else STABILITY="stable"; fi
 
-          # Changelog: kurzer Auto-Text; kannst du durch Release-Body ersetzen, falls gewünscht
           CHANGELOG="# Changelog\n\nAutomatischer Build ${TAG}."
 
-          # Metadata JSON via jq bauen
           METADATA=$(jq -nc \
             --arg label "$TAG" \
             --arg stability "$STABILITY" \
