@@ -1,0 +1,103 @@
+name: Release ZIP
+
+on:
+  push:
+    tags:
+      - "v*"                 # z.B. v1.0.2
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v1.0.1)"
+        required: true
+        default: ""
+
+jobs:
+  build-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set TAG env
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "TAG=${{ inputs.tag }}" >> $GITHUB_ENV
+          else
+            echo "TAG=${GITHUB_REF_NAME}" >> $GITHUB_ENV
+          fi
+          echo "Using TAG=$TAG"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          pip install pillow
+          sudo apt-get update
+          sudo apt-get install -y zip
+
+      # PNG -> TGA + Liste erzeugen (damit das Release immer komplett ist)
+      - name: Convert PNG -> TGA (512x512 transparent)
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          from PIL import Image
+          png_root = Path("JDReload/media/png")
+          out_root = Path("JDReload/media"); out_root.mkdir(parents=True, exist_ok=True)
+          def fit(img, size=(512,512)):
+              cw,ch=size; img=img.convert("RGBA")
+              iw,ih=img.size; s=min(cw/iw, ch/ih)
+              nw=max(1,int(iw*s)); nh=max(1,int(ih*s))
+              r=img.resize((nw,nh), Image.LANCZOS)
+              c=Image.new("RGBA",(cw,ch),(0,0,0,0))
+              c.paste(r, ((cw-nw)//2,(ch-nh)//2), r)
+              return c
+          for p in png_root.rglob("*.png"):
+              out=fit(Image.open(p),(512,512))
+              out.save(out_root/(p.stem+".tga"), format="TGA", compress=False)
+              print("[OK]", p)
+          PY
+
+      - name: Generate JDReload_Textures.lua
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          media = Path("JDReload/media")
+          tgas = sorted(media.glob("*.tga"))
+          lua = Path("JDReload/JDReload_Textures.lua")
+          def wow(p): return ("Interface\\AddOns\\JDReload\\media\\"+p.name).replace("\\","\\\\")
+          lines = [
+            "-- !!! AUTO-GENERIERT. NICHT MANUELL EDITIEREN !!!",
+            "JDReloadTextures = JDReloadTextures or {}",
+            "JDReloadTextures.CUSTOM_TEXTURES = {",
+          ] + [f'  "{wow(p)}",' for p in tgas] + ["}"]
+          lua.write_text("\n".join(lines), encoding="utf-8")
+          print("wrote", lua, "entries:", len(tgas))
+          PY
+
+      - name: Sanity check
+        run: |
+          echo "PNGs:" $(find JDReload/media/png -type f -iname '*.png' | wc -l || true)
+          echo "TGAs:" $(find JDReload/media -maxdepth 1 -type f -iname '*.tga' | wc -l || true)
+          test -f JDReload/JDReload.toc
+          test -s JDReload/JDReload_Textures.lua
+
+      - name: Create ZIP (exclude PNG sources)
+        run: |
+          ZIP="JDReload-$TAG.zip"
+          zip -r "$ZIP" JDReload -x "JDReload/media/png/*" "**/.DS_Store" "**/Thumbs.db"
+          ls -lh "$ZIP"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: JDReload ${{ env.TAG }}
+          draft: false
+          prerelease: false
+          files: |
+            JDReload-${{ env.TAG }}.zip
