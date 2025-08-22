@@ -1,0 +1,87 @@
+name: Build Textures
+
+on:
+  push:
+    paths:
+      - 'JDReload/media/png/**'
+      - 'JDReload/JDReload_Textures.lua'   # falls du manuell löschen willst
+      - '.github/workflows/build-textures.yml'
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # erlaubt Commit zurück ins Repo
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Pillow
+        run: pip install pillow
+
+      - name: Convert PNG -> TGA (512 canvas, transparent, top-left origin)
+        run: |
+          python - << 'PY'
+          import sys
+          from pathlib import Path
+          from PIL import Image, ImageOps
+
+          png_root = Path("JDReload/media/png")
+          out_root = Path("JDReload/media")
+          out_root.mkdir(parents=True, exist_ok=True)
+
+          def fit_into_canvas(img, size=(512,512)):
+              cw, ch = size
+              img = img.convert("RGBA")
+              iw, ih = img.size
+              scale = min(cw/iw, ch/ih)
+              nw = max(1, int(round(iw*scale)))
+              nh = max(1, int(round(ih*scale)))
+              resized = img.resize((nw, nh), Image.LANCZOS)
+              canvas = Image.new("RGBA", (cw, ch), (0,0,0,0))
+              canvas.paste(resized, ((cw-nw)//2, (ch-nh)//2), resized)
+              return canvas
+
+          pngs = list(png_root.rglob("*.png"))
+          for p in pngs:
+              img = Image.open(p)
+              out = fit_into_canvas(img, (512,512))
+              tga_path = out_root / (p.stem + ".tga")
+              out.save(tga_path, format="TGA", compress=False)
+              print("[OK]", p, "->", tga_path)
+          PY
+
+      - name: Generate JDReload_Textures.lua
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          media = Path("JDReload/media")
+          tgas = sorted([p for p in media.glob("*.tga")])
+          lua_path = Path("JDReload/JDReload_Textures.lua")
+
+          def wow_path(p: Path):
+              return ("Interface\\AddOns\\JDReload\\media\\" + p.name).replace("\\", "\\\\")
+
+          lines = []
+          lines.append("-- !!! AUTO-GENERIERT. NICHT MANUELL EDITIEREN !!!")
+          lines.append("JDReloadTextures = JDReloadTextures or {}")
+          lines.append("JDReloadTextures.CUSTOM_TEXTURES = {")
+          for p in tgas:
+              lines.append(f'  "{wow_path(p)}",')
+          lines.append("}")
+          lua_path.write_text("\n".join(lines), encoding="utf-8")
+          print("Wrote", lua_path, "with", len(tgas), "entries.")
+          PY
+
+      - name: Commit & Push
+        uses: EndBug/add-and-commit@v9
+        with:
+          add: "JDReload/media/*.tga JDReload/JDReload_Textures.lua"
+          message: "chore(media): auto-convert PNG->TGA and regenerate JDReload_Textures.lua"
+          default_author: github_actions

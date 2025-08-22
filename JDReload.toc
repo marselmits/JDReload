@@ -1,0 +1,8 @@
+## Interface: 110200
+## Title: JD Reload
+## Notes: Shows a Reload UI button for the Raid when triggered
+## Author: Marsel
+## Version: 1.0
+
+JDReload_Textures.lua
+JDReload.lua
