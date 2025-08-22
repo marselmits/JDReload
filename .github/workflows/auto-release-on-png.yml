@@ -2,18 +2,19 @@ name: Auto Release on PNG push
 
 on:
   push:
-    branches: [ main ]          # ggf. deinen Default-Branch anpassen
+    branches: [ main ]                 # ggf. anpassen
     paths:
-      - 'JDReload/media/png/**' # nur loslaufen, wenn PNGs geändert wurden
+      - 'JDReload/media/png/**'
+  workflow_dispatch: {}                # manuell startbar
 
 jobs:
   build-and-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write           # für Tag/Release + Push der generierten Dateien
+      contents: write                  # für Tag/Release + Push
 
     steps:
-      - name: Checkout (mit Tags)
+      - name: Checkout (with tags)
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -27,9 +28,9 @@ jobs:
         run: |
           pip install pillow
           sudo apt-get update
-          sudo apt-get install -y zip
+          sudo apt-get install -y zip jq
 
-      # 1) PNG -> TGA (512x512, transparent, zentriert)
+      # 1) PNG -> TGA (512x512 transparent, zentriert)
       - name: Convert PNG -> TGA
         run: |
           python - << 'PY'
@@ -37,6 +38,7 @@ jobs:
           from PIL import Image
           png_root = Path("JDReload/media/png")
           out_root = Path("JDReload/media"); out_root.mkdir(parents=True, exist_ok=True)
+
           def fit(img, size=(512,512)):
               cw,ch=size; img=img.convert("RGBA")
               iw,ih=img.size; s=min(cw/iw, ch/ih)
@@ -45,6 +47,7 @@ jobs:
               c=Image.new("RGBA",(cw,ch),(0,0,0,0))
               c.paste(r, ((cw-nw)//2,(ch-nh)//2), r)
               return c
+
           pngs = list(png_root.rglob("*.png"))
           for p in pngs:
               out = fit(Image.open(p),(512,512))
@@ -70,17 +73,15 @@ jobs:
           print("wrote", lua, "entries:", len(tgas))
           PY
 
-      # 3) Debug: was wurde gefunden/gebaut?
+      # 3) Debug
       - name: Show tree and counts
         run: |
-          echo "== TREE =="
-          ls -R
-          echo
-          echo "== COUNTS =="
+          echo "== TREE ==" && ls -R
+          echo "== COUNTS ==" 
           echo "PNGs:" $(find JDReload/media/png -type f -iname '*.png' | wc -l || true)
           echo "TGAs:" $(find JDReload/media -maxdepth 1 -type f -iname '*.tga' | wc -l || true)
 
-      # 4) Generierte Dateien committen (kein Re-Trigger, da Trigger nur auf png/** hört)
+      # 4) Generierte Dateien committen (triggert NICHT erneut, da Trigger nur auf png/** hört)
       - name: Commit & push generated files
         run: |
           git config user.name  "github-actions[bot]"
@@ -89,16 +90,27 @@ jobs:
           git diff --cached --quiet || git commit -m "chore(media): auto-convert PNG->TGA and regen list [ci skip]"
           git push || true
 
-      # 5) Tag erzeugen (Datum+Run-Nummer+kurzer SHA), damit jedes Release einzigartig ist
-      - name: Create tag
+      # 5) Tag bestimmen/erstellen
+      - name: Create tag from TOC version
         id: tag
         run: |
-          TS=$(date -u +'%Y%m%d-%H%M%S')
-          SHORTSHA=$(git rev-parse --short HEAD)
-          TAG="v${TS}-run${GITHUB_RUN_NUMBER}-${SHORTSHA}"
+          set -euo pipefail
+          # Version sauber aus der TOC ziehen (whitespace tolerant, CRLF entfernen)
+          VER=$(sed -n 's/^##[[:space:]]*Version:[[:space:]]*\(.*\)$/\1/p' JDReload/JDReload.toc | head -n1 | tr -d '\r')
+          if [ -z "$VER" ]; then
+            echo "No version found in JDReload.toc (## Version: X.Y.Z)"; exit 1
+          fi
+          TAG="v$VER"
+          echo "Using TAG=$TAG"
           echo "TAG=$TAG" >> $GITHUB_ENV
-          git tag -a "$TAG" -m "Auto release $TAG"
-          git push origin "$TAG"
+          
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "Tag $TAG already exists; skipping tag creation"
+          else
+            git tag -a "$TAG" -m "Auto release $TAG"
+            git push origin "$TAG"
+          fi
+
 
       # 6) ZIP bauen (PNG-Quellen ausschließen)
       - name: Create ZIP
@@ -106,8 +118,9 @@ jobs:
           ZIP="JDReload-${TAG}.zip"
           zip -r "$ZIP" JDReload -x "JDReload/media/png/*" "**/.DS_Store" "**/Thumbs.db"
           ls -lh "$ZIP"
+          echo "ZIP=$ZIP" >> $GITHUB_ENV
 
-      # 7) Release veröffentlichen
+      # 7) GitHub Release veröffentlichen
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -116,4 +129,37 @@ jobs:
           draft: false
           prerelease: false
           files: |
-            JDReload-${{ env.TAG }}.zip
+            ${{ env.ZIP }}
+
+      # 8) Wago Upload (nur wenn Secrets/Vars gesetzt)
+      - name: Upload to Wago
+        if: ${{ secrets.WAGO_API_KEY != '' && vars.WAGO_PROJECT_ID != '' }}
+        env:
+          WAGO_API_KEY: ${{ secrets.WAGO_API_KEY }}
+          WAGO_PROJECT_ID: ${{ vars.WAGO_PROJECT_ID }}
+          WAGO_RETAIL_PATCH: ${{ vars.WAGO_RETAIL_PATCH }}
+        run: |
+          # Stabilität aus dem Tag ableiten (alpha/beta/stable)
+          if [[ "${TAG,,}" == *"alpha"* ]]; then STABILITY="alpha";
+          elif [[ "${TAG,,}" == *"beta"* ]]; then STABILITY="beta";
+          else STABILITY="stable"; fi
+
+          # Changelog: kurzer Auto-Text; kannst du durch Release-Body ersetzen, falls gewünscht
+          CHANGELOG="# Changelog\n\nAutomatischer Build ${TAG}."
+
+          # Metadata JSON via jq bauen
+          METADATA=$(jq -nc \
+            --arg label "$TAG" \
+            --arg stability "$STABILITY" \
+            --arg changelog "$CHANGELOG" \
+            --arg retail "$WAGO_RETAIL_PATCH" \
+            '{label:$label, stability:$stability, changelog:$changelog, supported_retail_patch:$retail}')
+
+          echo "Metadata: $METADATA"
+
+          curl -f -X POST \
+            -H "authorization: Bearer ${WAGO_API_KEY}" \
+            -H "accept: application/json" \
+            -F "metadata=${METADATA}" \
+            -F "file=@${ZIP}" \
+            "https://addons.wago.io/api/projects/${WAGO_PROJECT_ID}/version"
