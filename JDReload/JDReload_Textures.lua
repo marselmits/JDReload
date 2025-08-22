@@ -1,2 +1,30 @@
+-- !!! AUTO-GENERIERT. NICHT MANUELL EDITIEREN !!!
 JDReloadTextures = JDReloadTextures or {}
-JDReloadTextures.CUSTOM_TEXTURES = {}
+JDReloadTextures.CUSTOM_TEXTURES = {
+  "Interface\\AddOns\\JDReload\\media\\reload1.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload10.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload11.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload12.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload13.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload14.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload15.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload16.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload17.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload18.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload19.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload2.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload20.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload21.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload22.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload23.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload24.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload25.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload26.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload3.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload4.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload5.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload6.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload7.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload8.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload9.tga",
+}
