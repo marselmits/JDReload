@@ -20,6 +20,7 @@ JDReloadTextures.CUSTOM_TEXTURES = {
   "Interface\\AddOns\\JDReload\\media\\reload24.tga",
   "Interface\\AddOns\\JDReload\\media\\reload25.tga",
   "Interface\\AddOns\\JDReload\\media\\reload26.tga",
+  "Interface\\AddOns\\JDReload\\media\\reload27.tga",
   "Interface\\AddOns\\JDReload\\media\\reload3.tga",
   "Interface\\AddOns\\JDReload\\media\\reload4.tga",
   "Interface\\AddOns\\JDReload\\media\\reload5.tga",
