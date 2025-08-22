@@ -13,7 +13,11 @@ jobs:
     permissions:
       contents: write                  # für Tag/Release + Push
     env:
-      # Secrets/Variablen auf Job-Ebene verfügbar machen
+      # --- Versionierungsmodus ---
+      AUTO_VERSION_MODE: semver        # semver | timestamp
+      VERSION_PREFIX: "1.0"            # nur für timestamp-Modus (z.B. "1.0")
+
+      # --- Wago Secrets/Variablen ---
       WAGO_API_KEY: ${{ secrets.WAGO_API_KEY }}
       WAGO_PROJECT_ID: ${{ vars.WAGO_PROJECT_ID }}
       WAGO_RETAIL_PATCH: ${{ vars.WAGO_RETAIL_PATCH }}
@@ -43,7 +47,6 @@ jobs:
           from PIL import Image
           png_root = Path("JDReload/media/png")
           out_root = Path("JDReload/media"); out_root.mkdir(parents=True, exist_ok=True)
-
           def fit(img, size=(512,512)):
               cw,ch=size; img=img.convert("RGBA")
               iw,ih=img.size; s=min(cw/iw, ch/ih)
@@ -52,9 +55,7 @@ jobs:
               c=Image.new("RGBA",(cw,ch),(0,0,0,0))
               c.paste(r, ((cw-nw)//2,(ch-nh)//2), r)
               return c
-
-          pngs = list(png_root.rglob("*.png"))
-          for p in pngs:
+          for p in png_root.rglob("*.png"):
               out = fit(Image.open(p),(512,512))
               out.save(out_root/(p.stem+".tga"), format="TGA", compress=False)
               print("[OK]", p)
@@ -95,17 +96,61 @@ jobs:
           git diff --cached --quiet || git commit -m "chore(media): auto-convert PNG->TGA and regen list [ci skip]"
           git push || true
 
-      # 5) Tag aus TOC-Version bestimmen/erstellen
+      # 5) TOC-Version automatisch setzen/erhöhen und committen
+      - name: Auto-bump TOC version
+        id: bumpver
+        run: |
+          set -euo pipefail
+          MODE="${AUTO_VERSION_MODE}"
+          TOC="JDReload/JDReload.toc"
+
+          # Aktuelle Version lesen (falls vorhanden)
+          CUR=$(sed -n 's/^##[[:space:]]*Version:[[:space:]]*\(.*\)$/\1/p' "$TOC" | head -n1 | tr -d '\r' || true)
+          echo "Current TOC Version: ${CUR:-<none>}"
+
+          if [ "$MODE" = "timestamp" ]; then
+            TS=$(date -u +'%Y%m%d%H%M%S')
+            PRE="${VERSION_PREFIX:-1.0}"
+            NEW="${PRE}.${TS}"
+          else
+            # semver patch bump
+            if echo "${CUR:-}" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+              MAJ=$(echo "$CUR" | cut -d. -f1)
+              MIN=$(echo "$CUR" | cut -d. -f2)
+              PAT=$(echo "$CUR" | cut -d. -f3)
+              NEW="${MAJ}.${MIN}.$((PAT+1))"
+            elif echo "${CUR:-}" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+              # Wenn nur X.Y vorhanden ist, starte bei X.Y.0
+              NEW="${CUR}.0"
+            else
+              # Fallback wenn nichts gefunden: starte bei 1.0.0
+              NEW="1.0.0"
+            fi
+          fi
+
+          echo "New TOC Version: $NEW"
+
+          # Zeile ersetzen oder hinzufügen
+          if grep -qE '^##[[:space:]]*Version:' "$TOC"; then
+            sed -i.bak -E "s/^##[[:space:]]*Version:.*$/## Version: ${NEW}/" "$TOC"
+          else
+            printf "\n## Version: %s\n" "$NEW" >> "$TOC"
+          fi
+          rm -f "$TOC.bak"
+
+          echo "VER=$NEW" >> $GITHUB_ENV
+
+          # Commit & Push der Versionsänderung
+          git add "$TOC"
+          git diff --cached --quiet || git commit -m "chore(version): bump to ${NEW} [ci skip]"
+          git push || true
+
+      # 6) Tag aus der neuen TOC-Version erstellen (oder überspringen, wenn existiert)
       - name: Create tag from TOC version
         id: tag
         run: |
           set -euo pipefail
-          # Version sauber aus der TOC ziehen (whitespace tolerant, CRLF entfernen)
-          VER=$(sed -n 's/^##[[:space:]]*Version:[[:space:]]*\(.*\)$/\1/p' JDReload/JDReload.toc | head -n1 | tr -d '\r')
-          if [ -z "$VER" ]; then
-            echo "No version found in JDReload.toc (## Version: X.Y.Z)"; exit 1
-          fi
-          TAG="v$VER"
+          TAG="v${VER}"
           echo "Using TAG=$TAG"
           echo "TAG=$TAG" >> $GITHUB_ENV
 
@@ -116,7 +161,7 @@ jobs:
             git push origin "$TAG"
           fi
 
-      # 6) ZIP bauen (PNG-Quellen ausschließen)
+      # 7) ZIP bauen (PNG-Quellen ausschließen)
       - name: Create ZIP
         run: |
           ZIP="JDReload-${TAG}.zip"
@@ -124,7 +169,7 @@ jobs:
           ls -lh "$ZIP"
           echo "ZIP=$ZIP" >> $GITHUB_ENV
 
-      # 7) GitHub Release veröffentlichen
+      # 8) GitHub Release veröffentlichen
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -135,7 +180,7 @@ jobs:
           files: |
             ${{ env.ZIP }}
 
-      # 8) Wago Upload (nur wenn Secrets/Vars gesetzt)
+      # 9) Wago Upload (nur wenn Secrets/Vars gesetzt)
       - name: Upload to Wago
         if: ${{ env.WAGO_API_KEY != '' && env.WAGO_PROJECT_ID != '' }}
         run: |
