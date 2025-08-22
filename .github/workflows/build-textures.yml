@@ -4,7 +4,7 @@ on:
   push:
     paths:
       - 'JDReload/media/png/**'
-      - 'JDReload/JDReload_Textures.lua'   # falls du manuell löschen willst
+      - 'JDReload/JDReload_Textures.lua'
       - '.github/workflows/build-textures.yml'
   workflow_dispatch: {}
 
@@ -12,7 +12,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # erlaubt Commit zurück ins Repo
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
@@ -87,5 +87,5 @@ jobs:
             JDReload/JDReload_Textures.lua
           message: "chore(media): auto-convert PNG->TGA and regenerate list"
           default_author: github_actions
-          allow_empty: true
+          pathspec_error_handling: ignore
 
