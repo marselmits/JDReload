@@ -1,0 +1,119 @@
+name: Auto Release on PNG push
+
+on:
+  push:
+    branches: [ main ]          # ggf. deinen Default-Branch anpassen
+    paths:
+      - 'JDReload/media/png/**' # nur loslaufen, wenn PNGs geändert wurden
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write           # für Tag/Release + Push der generierten Dateien
+
+    steps:
+      - name: Checkout (mit Tags)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: |
+          pip install pillow
+          sudo apt-get update
+          sudo apt-get install -y zip
+
+      # 1) PNG -> TGA (512x512, transparent, zentriert)
+      - name: Convert PNG -> TGA
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          from PIL import Image
+          png_root = Path("JDReload/media/png")
+          out_root = Path("JDReload/media"); out_root.mkdir(parents=True, exist_ok=True)
+          def fit(img, size=(512,512)):
+              cw,ch=size; img=img.convert("RGBA")
+              iw,ih=img.size; s=min(cw/iw, ch/ih)
+              nw=max(1,int(iw*s)); nh=max(1,int(ih*s))
+              r=img.resize((nw,nh), Image.LANCZOS)
+              c=Image.new("RGBA",(cw,ch),(0,0,0,0))
+              c.paste(r, ((cw-nw)//2,(ch-nh)//2), r)
+              return c
+          pngs = list(png_root.rglob("*.png"))
+          for p in pngs:
+              out = fit(Image.open(p),(512,512))
+              out.save(out_root/(p.stem+".tga"), format="TGA", compress=False)
+              print("[OK]", p)
+          PY
+
+      # 2) Lua-Liste erzeugen
+      - name: Generate JDReload_Textures.lua
+        run: |
+          python - << 'PY'
+          from pathlib import Path
+          media = Path("JDReload/media")
+          tgas = sorted(media.glob("*.tga"))
+          lua = Path("JDReload/JDReload_Textures.lua")
+          def wow(p): return ("Interface\\AddOns\\JDReload\\media\\"+p.name).replace("\\","\\\\")
+          lines = [
+            "-- !!! AUTO-GENERIERT. NICHT MANUELL EDITIEREN !!!",
+            "JDReloadTextures = JDReloadTextures or {}",
+            "JDReloadTextures.CUSTOM_TEXTURES = {",
+          ] + [f'  "{wow(p)}",' for p in tgas] + ["}"]
+          lua.write_text("\n".join(lines), encoding="utf-8")
+          print("wrote", lua, "entries:", len(tgas))
+          PY
+
+      # 3) Debug: was wurde gefunden/gebaut?
+      - name: Show tree and counts
+        run: |
+          echo "== TREE =="
+          ls -R
+          echo
+          echo "== COUNTS =="
+          echo "PNGs:" $(find JDReload/media/png -type f -iname '*.png' | wc -l || true)
+          echo "TGAs:" $(find JDReload/media -maxdepth 1 -type f -iname '*.tga' | wc -l || true)
+
+      # 4) Generierte Dateien committen (kein Re-Trigger, da Trigger nur auf png/** hört)
+      - name: Commit & push generated files
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add JDReload/media JDReload/JDReload_Textures.lua || true
+          git diff --cached --quiet || git commit -m "chore(media): auto-convert PNG->TGA and regen list [ci skip]"
+          git push || true
+
+      # 5) Tag erzeugen (Datum+Run-Nummer+kurzer SHA), damit jedes Release einzigartig ist
+      - name: Create tag
+        id: tag
+        run: |
+          TS=$(date -u +'%Y%m%d-%H%M%S')
+          SHORTSHA=$(git rev-parse --short HEAD)
+          TAG="v${TS}-run${GITHUB_RUN_NUMBER}-${SHORTSHA}"
+          echo "TAG=$TAG" >> $GITHUB_ENV
+          git tag -a "$TAG" -m "Auto release $TAG"
+          git push origin "$TAG"
+
+      # 6) ZIP bauen (PNG-Quellen ausschließen)
+      - name: Create ZIP
+        run: |
+          ZIP="JDReload-${TAG}.zip"
+          zip -r "$ZIP" JDReload -x "JDReload/media/png/*" "**/.DS_Store" "**/Thumbs.db"
+          ls -lh "$ZIP"
+
+      # 7) Release veröffentlichen
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: JDReload ${{ env.TAG }}
+          draft: false
+          prerelease: false
+          files: |
+            JDReload-${{ env.TAG }}.zip
