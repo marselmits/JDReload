@@ -1,4 +1,2 @@
--- !!! AUTO-GENERIERT. NICHT MANUELL EDITIEREN !!!
 JDReloadTextures = JDReloadTextures or {}
-JDReloadTextures.CUSTOM_TEXTURES = {
-}
+JDReloadTextures.CUSTOM_TEXTURES = {}
